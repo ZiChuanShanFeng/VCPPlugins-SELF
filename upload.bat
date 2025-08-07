@@ -11,6 +11,10 @@ echo Committing changes...
 git commit -m "%commitMessage%"
 
 echo.
+echo Pulling latest changes from GitHub...
+git pull origin main
+
+echo.
 echo Pushing to GitHub...
 git push origin main
 
