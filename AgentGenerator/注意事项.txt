@@ -1,0 +1,3 @@
+需要在config.env中手动加入
+VarAvailableVars="VarTimeNow,VarSystemInfo,VarCity,VarUser,VarUserInfo,VarHome,VarTeam,VarVchatPath,VarDivRender,VarRendering,VarHttpUrl,VarHttpsUrl,VarDdnsUrl"
+VarAvailableTars="TarSysPrompt,TarEmojiPrompt,TarDailyNoteGuide,VarFileTool"
