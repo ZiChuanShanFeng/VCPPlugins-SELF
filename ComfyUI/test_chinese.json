@@ -1,0 +1,9 @@
+{
+  "workflow": "text2img_api.json",
+  "params": [
+    { 
+      "node_title": "Positive Prompt", 
+      "inputs": { "text": "一个穿着校服的日本动漫女孩，站在樱花树下，美丽的风景" } 
+    }
+  ]
+}

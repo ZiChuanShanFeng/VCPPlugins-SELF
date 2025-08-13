@@ -1,0 +1,21 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "ComfyUI_InputServer",
+  "displayName": "ComfyUI 多路径文件服务器",
+  "version": "1.1.0",
+  "description": "为多个指定文件夹提供 HTTP 访问服务，例如 ComfyUI 的 output 和 AppData 的 attachments 文件夹。",
+  "author": "Gemini & Kilo Code",
+  "pluginType": "service",
+  "entryPoint": {
+    "type": "nodejs",
+    "script": "image-server.js"
+  },
+  "communication": {
+    "protocol": "direct"
+  },
+  "configSchema": {
+    "COMFYUI_MOUNTS": "string",
+    "COMFYUI_ACCESS_KEY": "string",
+    "DebugMode": "boolean"
+  }
+}

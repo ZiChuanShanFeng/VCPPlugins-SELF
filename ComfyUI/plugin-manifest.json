@@ -1,0 +1,37 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "comfyui",
+  "version": "1.1.0",
+  "displayName": "ComfyUI 工作流绘图插件",
+  "description": "通过调用本地 ComfyUI API，使用工作流来生成图片。",
+  "author": "Gemini",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node comfyui.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 600000
+  },
+  "configSchema": {
+    "COMFYUI_BASE_URL": "string",
+    "FILE_SERVER_PUBLIC_IP": "string",
+    "FILE_SERVER_PORT": "string",
+    "FILE_SERVER_ACCESS_KEY": "string"
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "RunWorkflow",
+        "description": "这是一个画图工具。当用户要求画图或生成图像时，你必须调用此工具，而不是自己创作或描述提示词。使用此工具调用 ComfyUI 执行一个指定的工作流来生成图片.\n注意：每次调用时，params 参数都应包含本次生成所需的【全部】修改，不要依赖之前调用的状态.\n参数:\n- workflow (字符串, 必需): 要使用的本地工作流文件名 (例如: 'img2img_api.json').\n- params (对象数组, 可选): 一个包含多个“补丁”指令的数组。每个指令用于修改一个节点.\n  - 每个指令对象包含: \n    - node_title (字符串) 或 node_id (字符串): 用于定位要修改的节点.\n    - inputs (对象): 一个键值对对象，键是节点的输入参数名，值是要设置的新值.\n- prompt (字符串, 可选): 一个简写形式，等同于设置标题为'Positive Prompt'的节点的'text'输入。如果提供了'params'，此项将被忽略。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」comfyui「末」,\nworkflow:「始」img2img_api.json「末」,\nparams:「始」[ { \"node_title\": \"Load Checkpoint\", \"inputs\": { \"ckpt_name\": \"sd_xl_base_1.0.safetensors\" } }, { \"node_title\": \"Positive Prompt\", \"inputs\": { \"text\": \"a beautiful cat in a spaceship, masterpiece\" } } ]「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "GetInfo",
+        "description": "查询 ComfyUI 服务器信息.\n参数:\n- info (字符串, 必需): 查询类型。可选值：\n  * 'workflows' - 查看 'workflows' 文件夹下可用的工作流文件.\n  * 'checkpoints' - 查看可用的 Checkpoint 模型.\n  * 'loras' - 查看可用的 LoRA 模型.\n  * 'vaes' - 查看可用的 VAE 模型.\n  * 'samplers' - 查看可用的采样器.\n  * 'schedulers' - 查看可用的调度器。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」comfyui「末」,\ninfo:「始」workflows「末」\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  }
+}

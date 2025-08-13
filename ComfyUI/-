@@ -1,0 +1,5 @@
+{"workflow": "txt2img_api.json", "params": [{"node_title": "Positive Prompt", "inputs": {"text
+     ": "masterpiece, best quality, ultra-detailed, 1girl, cute little girl, kindergarten, smiling,
+     looking at viewer, beautiful detailed eyes, cinematic lighting"}}, {"node_title": "Negative
+     Prompt", "inputs": {"text": "nsfw, worst quality, low quality, blurry, deformed, ugly, extra
+     limbs, extra fingers"}}, {"node_title": "KSampler", "inputs": {"seed": 42}}]}

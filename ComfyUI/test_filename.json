@@ -1,0 +1,9 @@
+{
+  "workflow": "text2img_api.json",
+  "params": [
+    { 
+      "node_title": "Positive Prompt", 
+      "inputs": { "text": "A cute little girl with anime style" } 
+    }
+  ]
+}
