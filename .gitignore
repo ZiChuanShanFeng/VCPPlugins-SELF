@@ -3,3 +3,4 @@ config.env
 
 # Ignore generated images
 output/
+input/
