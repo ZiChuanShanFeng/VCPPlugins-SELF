@@ -225,7 +225,7 @@ const debugMode = true;
 
 ## 开发信息
 
-- **作者**: Gemini
+- **作者**: ZiChuanShanFeng
 - **版本**: 1.1.0
 - **插件类型**: 同步插件
 - **通信协议**: stdio
