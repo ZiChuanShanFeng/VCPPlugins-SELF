@@ -8,8 +8,8 @@ ComfyUI插件是一个为VCP设计的同步插件，用于通过调用本地Comf
 ComfyUI_InputServer服务器插件基于VCPDistImageServer基础上修改而成
 
 本插件适用于分布式服务器 ComfyUI_InputServer 为服务器所建
-[基本原理](./ComfyUI_Architecture.md)
-[联动机制](./ComfyUI_Integration.md)
+- [基本原理](./ComfyUI_Architecture.md)
+- [联动机制](./ComfyUI_Integration.md)
 
 ## 功能特性
 
