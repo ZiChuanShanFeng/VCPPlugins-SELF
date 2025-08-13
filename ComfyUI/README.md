@@ -1,6 +1,5 @@
 # ComfyUI Plugin for VCP
 
-[English](README.md) | [中文](README_CN.md)
 
 ## 概述
 
@@ -9,6 +8,8 @@ ComfyUI插件是一个为VCP设计的同步插件，用于通过调用本地Comf
 ComfyUI_InputServer服务器插件基于VCPDistImageServer基础上修改而成
 
 本插件适用于分布式服务器 ComfyUI_InputServer 为服务器所建
+- [基本原理](./ComfyUI_Architecture.md)
+- [联动机制](./ComfyUI_Integration.md)
 
 ## 功能特性
 
@@ -224,7 +225,7 @@ const debugMode = true;
 
 ## 开发信息
 
-- **作者**: Gemini
+- **作者**: ZiChuanShanFeng
 - **版本**: 1.1.0
 - **插件类型**: 同步插件
 - **通信协议**: stdio
