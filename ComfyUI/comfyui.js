@@ -88,13 +88,15 @@ async function downloadImageToInput(imageUrl, filename) {
         const buffer = await response.arrayBuffer();
         const imageBuffer = Buffer.from(buffer);
         
-        // 保存到ComfyUI的input目录
-        const inputDir = path.join(__dirname, 'input');
-        await fs.mkdir(inputDir, { recursive: true });
-        const inputPath = path.join(inputDir, filename);
-        await fs.writeFile(inputPath, imageBuffer);
+        // 只保存到ComfyUI服务器的实际input目录
+        const config = await initConfig();
+        const serverInputDir = config.serverInputDir;
+        await fs.mkdir(serverInputDir, { recursive: true });
+        const serverInputPath = path.join(serverInputDir, filename);
+        await fs.writeFile(serverInputPath, imageBuffer);
         
-        console.error(`[ComfyUI] Downloaded image to input: ${filename}`);
+        console.error(`[ComfyUI] Downloaded image to server input: ${filename}`);
+        console.error(`[ComfyUI] Server path: ${serverInputPath}`);
         return filename;
     } catch (error) {
         console.error(`[ComfyUI] Failed to download image: ${error.message}`);
@@ -124,20 +126,13 @@ async function copyLocalImageToInput(imagePath, filename) {
         // 读取图片文件
         const imageBuffer = await fs.readFile(absolutePath);
         
-        // 保存到插件本地的input目录
-        const localInputDir = path.join(__dirname, 'input');
-        await fs.mkdir(localInputDir, { recursive: true });
-        const localInputPath = path.join(localInputDir, filename);
-        await fs.writeFile(localInputPath, imageBuffer);
-        
-        // 同时保存到ComfyUI服务器的input目录
+        // 只保存到ComfyUI服务器的input目录
         const serverInputDir = config.serverInputDir;
         await fs.mkdir(serverInputDir, { recursive: true });
         const serverInputPath = path.join(serverInputDir, filename);
         await fs.writeFile(serverInputPath, imageBuffer);
         
-        console.error(`[ComfyUI] Copied local image to both local and server input: ${filename} (from: ${absolutePath})`);
-        console.error(`[ComfyUI] Local path: ${localInputPath}`);
+        console.error(`[ComfyUI] Copied local image to server input: ${filename} (from: ${absolutePath})`);
         console.error(`[ComfyUI] Server path: ${serverInputPath}`);
         return filename;
     } catch (error) {
@@ -211,11 +206,331 @@ async function queuePrompt(prompt) {
     });
 }
 
+// --- Workflow Conversion Functions --- //
+
+// 导入通用节点适配器和智能参数修改器
+const {
+    generateSmartNodeTitle,
+    extractSmartParameters,
+    convertWorkflowToUniversalFormat,
+    generateNodeTypeReport
+} = require('./universal_node_adapter.js');
+
+const {
+    createSmartParameterModifier,
+    findNodesSmartly,
+    findBestParameterMatch
+} = require('./smart_parameter_modifier.js');
+
+// 转换完整工作流格式为API格式（使用通用适配器）
+function convertFullWorkflowToApiFormat(fullWorkflow) {
+    console.log('[ComfyUI] 使用通用节点适配器转换工作流...');
+    
+    // 生成节点类型报告
+    const report = generateNodeTypeReport(fullWorkflow);
+    console.log(`[ComfyUI] 工作流分析: ${report.total_nodes}个节点, ${report.total_types}种类型`);
+    console.log(`[ComfyUI] 支持的节点类型: ${report.supported_types.length}个`);
+    console.log(`[ComfyUI] 不支持的节点类型: ${report.unsupported_types.length}个`);
+    
+    if (report.unsupported_types.length > 0) {
+        console.log('[ComfyUI] 不支持的节点类型:', report.unsupported_types.join(', '));
+    }
+    
+    // 使用通用适配器转换工作流
+    return convertWorkflowToUniversalFormat(fullWorkflow);
+}
+
 // --- Plugin Logic --- //
 
 function findNodeByTitle(prompt, title) {
     for (const id in prompt) { if (prompt[id]._meta?.title === title) return prompt[id]; }
     return null;
+}
+
+// 获取可用选项
+async function getAvailableOptions(itemType) {
+    try {
+        const objectInfo = await get('/object_info');
+        
+        switch (itemType) {
+            case 'model':
+                return objectInfo.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] || [];
+            case 'lora':
+                return objectInfo.LoraLoader?.input?.required?.lora_name?.[0] || [];
+            case 'vae':
+                return objectInfo.VAELoader?.input?.required?.vae_name?.[0] || [];
+            case 'controlnet':
+                return objectInfo.ControlNetLoader?.input?.required?.control_net_name?.[0] || [];
+            case 'sampler':
+                return objectInfo.KSampler?.input?.required?.sampler_name?.[0] || [];
+            case 'scheduler':
+                return objectInfo.KSampler?.input?.required?.scheduler?.[0] || [];
+            default:
+                return [];
+        }
+    } catch (error) {
+        console.error(`[ComfyUI] 获取${itemType}选项失败: ${error.message}`);
+        return [];
+    }
+}
+
+// 通用智能匹配函数
+async function findBestMatch(requested, availableItems, itemType = 'item') {
+    // 检查是否存在精确匹配
+    if (availableItems.includes(requested)) {
+        return requested;
+    }
+    
+    console.error(`[ComfyUI] ${itemType} '${requested}' 不存在，尝试智能匹配...`);
+    
+    const requestedLower = requested.toLowerCase();
+    const matches = [];
+    
+    for (const item of availableItems) {
+        const itemLower = item.toLowerCase();
+        let score = 0;
+        
+        // 完全匹配（忽略大小写）
+        if (itemLower === requestedLower) score += 100;
+        
+        // 包含匹配
+        if (itemLower.includes(requestedLower) || requestedLower.includes(itemLower)) score += 50;
+        
+        // 拼写相似度
+        const distance = calculateLevenshteinDistance(itemLower, requestedLower);
+        const maxLength = Math.max(itemLower.length, requestedLower.length);
+        const similarity = 1 - (distance / maxLength);
+        score += similarity * 30;
+        
+        // 文件名特定匹配（针对模型文件）
+        if (itemType === 'model') {
+            // 移除扩展名进行比较
+            const itemNoExt = itemLower.replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, '');
+            const requestedNoExt = requestedLower.replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, '');
+            
+            if (itemNoExt === requestedNoExt) score += 80;
+            if (itemNoExt.includes(requestedNoExt) || requestedNoExt.includes(itemNoExt)) score += 40;
+            
+            // 版本号匹配
+            const versionMatch = itemNoExt.match(/v\d+(\.\d+)*/);
+            const versionMatchRequested = requestedNoExt.match(/v\d+(\.\d+)*/);
+            if (versionMatch && versionMatchRequested && versionMatch[0] === versionMatchRequested[0]) {
+                score += 25;
+            }
+            
+            // 增强的关键词匹配
+            const modelKeywords = [
+                'sd', 'xl', 'base', 'refiner', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6',
+                'anime', 'realistic', 'realistic', 'checkpoint', 'real', 'vision', 'epic', 'deliberate',
+                'dreamshaper', 'juggernaut', 'realisticvision', 'epicrealism'
+            ];
+            for (const keyword of modelKeywords) {
+                if (itemNoExt.includes(keyword) && requestedNoExt.includes(keyword)) {
+                    score += 15;
+                }
+            }
+        }
+        
+        // LoRA特定匹配
+        if (itemType === 'lora') {
+            const itemNoExt = itemLower.replace(/\.(safetensors|pt|pth)$/i, '');
+            const requestedNoExt = requestedLower.replace(/\.(safetensors|pt|pth)$/i, '');
+            
+            if (itemNoExt === requestedNoExt) score += 80;
+            if (itemNoExt.includes(requestedNoExt) || requestedNoExt.includes(itemNoExt)) score += 40;
+            
+            // LoRA关键词匹配
+            const loraKeywords = ['lora', 'style', 'character', 'concept', 'clothing', 'epic', 'realistic'];
+            for (const keyword of loraKeywords) {
+                if (itemNoExt.includes(keyword) && requestedNoExt.includes(keyword)) {
+                    score += 15;
+                }
+            }
+        }
+        
+        // VAE特定匹配
+        if (itemType === 'vae') {
+            const itemNoExt = itemLower.replace(/\.(safetensors|ckpt|pt|pth)$/i, '');
+            const requestedNoExt = requestedLower.replace(/\.(safetensors|ckpt|pt|pth)$/i, '');
+            
+            if (itemNoExt === requestedNoExt) score += 80;
+            if (itemNoExt.includes(requestedNoExt) || requestedNoExt.includes(itemNoExt)) score += 40;
+            
+            // VAE关键词匹配
+            const vaeKeywords = ['vae', 'mse', 'ema', 'pruned', 'ft', 'sdxl'];
+            for (const keyword of vaeKeywords) {
+                if (itemNoExt.includes(keyword) && requestedNoExt.includes(keyword)) {
+                    score += 15;
+                }
+            }
+        }
+        
+        // ControlNet特定匹配
+        if (itemType === 'controlnet') {
+            const itemNoExt = itemLower.replace(/\.(safetensors|pt|pth)$/i, '');
+            const requestedNoExt = requestedLower.replace(/\.(safetensors|pt|pth)$/i, '');
+            
+            if (itemNoExt === requestedNoExt) score += 80;
+            if (itemNoExt.includes(requestedNoExt) || requestedNoExt.includes(itemNoExt)) score += 40;
+            
+            // ControlNet关键词匹配
+            const controlnetKeywords = ['control', 'canny', 'depth', 'openpose', 'scribble', 'mlsd'];
+            for (const keyword of controlnetKeywords) {
+                if (itemNoExt.includes(keyword) && requestedNoExt.includes(keyword)) {
+                    score += 15;
+                }
+            }
+        }
+        
+        if (score > 0) {
+            matches.push({ item, score, similarity });
+        }
+    }
+    
+    // 按分数排序
+    matches.sort((a, b) => b.score - a.score);
+    
+    if (matches.length > 0) {
+        const bestMatch = matches[0];
+        console.error(`[ComfyUI] 找到最佳${itemType}匹配: ${bestMatch.item} (分数: ${bestMatch.score.toFixed(1)}, 相似度: ${bestMatch.similarity.toFixed(3)})`);
+        
+        // 如果有多个匹配，显示前几个选项
+        if (matches.length > 1) {
+            console.error(`[ComfyUI] 其他${itemType}匹配选项:`);
+            matches.slice(1, 4).forEach(match => {
+                console.error(`  - ${match.item} (分数: ${match.score.toFixed(1)}, 相似度: ${match.similarity.toFixed(3)})`);
+            });
+        }
+        
+        // 只有当分数足够高时才返回匹配
+        if (bestMatch.score >= 50) {
+            return bestMatch.item;
+        } else {
+            console.error(`[ComfyUI] 最佳匹配分数过低 (${bestMatch.score.toFixed(1)}), 需要更精确的匹配`);
+        }
+    }
+    
+    // 没有找到匹配，显示可用选项
+    console.error(`[ComfyUI] 未找到匹配的${itemType}`);
+    console.error(`[ComfyUI] 可用的${itemType}选项 (前10个):`);
+    availableItems.slice(0, 10).forEach(item => {
+        console.error(`  - ${item}`);
+    });
+    if (availableItems.length > 10) {
+        console.error(`  ... 还有 ${availableItems.length - 10} 个选项`);
+    }
+    
+    throw new Error(`${itemType} '${requested}' not found. Available ${itemType}s: ${availableItems.length} options`);
+}
+
+// 智能工作流名称匹配
+async function findMatchingWorkflow(requestedName) {
+    try {
+        // 检查文件是否存在
+        const workflowPath = path.join(WORKFLOW_DIR, requestedName);
+        await fs.access(workflowPath);
+        return requestedName; // 文件存在，直接返回
+    } catch (error) {
+        // 文件不存在，尝试智能匹配
+        console.error(`[ComfyUI] 工作流文件不存在: ${requestedName}，尝试智能匹配...`);
+        
+        try {
+            const files = await fs.readdir(WORKFLOW_DIR);
+            const workflowFiles = files.filter(f => f.endsWith('.json'));
+            
+            // 智能匹配算法
+            const requested = requestedName.toLowerCase().replace('.json', '');
+            const matches = [];
+            
+            for (const file of workflowFiles) {
+                const fileName = file.toLowerCase().replace('.json', '');
+                let score = 0;
+                
+                // 完全匹配
+                if (fileName === requested) score += 100;
+                
+                // 包含匹配
+                if (fileName.includes(requested) || requested.includes(fileName)) score += 50;
+                
+                // 拼写相似度
+                const distance = calculateLevenshteinDistance(fileName, requested);
+                const maxLength = Math.max(fileName.length, requested.length);
+                const similarity = 1 - (distance / maxLength);
+                score += similarity * 30;
+                
+                // 关键词匹配
+                const keywords = ['text', 'txt', 'img', 'image', 'inpaint', 'control', 'upscale', 'api'];
+                for (const keyword of keywords) {
+                    if (fileName.includes(keyword) && requested.includes(keyword)) {
+                        score += 20;
+                    }
+                }
+                
+                if (score > 0) {
+                    matches.push({ file, score, fileName });
+                }
+            }
+            
+            // 按分数排序
+            matches.sort((a, b) => b.score - a.score);
+            
+            if (matches.length > 0) {
+                const bestMatch = matches[0];
+                console.error(`[ComfyUI] 找到最佳匹配: ${bestMatch.file} (分数: ${bestMatch.score.toFixed(1)})`);
+                
+                // 如果有多个匹配，显示前几个选项
+                if (matches.length > 1) {
+                    console.error(`[ComfyUI] 其他匹配选项:`);
+                    matches.slice(1, 4).forEach(match => {
+                        console.error(`  - ${match.file} (分数: ${match.score.toFixed(1)})`);
+                    });
+                }
+                
+                return bestMatch.file;
+            }
+            
+            // 没有找到匹配，显示可用文件
+            console.error(`[ComfyUI] 未找到匹配的工作流文件`);
+            console.error(`[ComfyUI] 可用的工作流文件:`);
+            workflowFiles.forEach(file => {
+                console.error(`  - ${file}`);
+            });
+            
+            throw new Error(`Workflow file '${requestedName}' not found. Available files: ${workflowFiles.join(', ')}`);
+            
+        } catch (error) {
+            throw new Error(`Cannot find workflow file '${requestedName}': ${error.message}`);
+        }
+    }
+}
+
+// 计算编辑距离（Levenshtein距离）
+function calculateLevenshteinDistance(str1, str2) {
+    const matrix = [];
+    
+    for (let i = 0; i <= str2.length; i++) {
+        matrix[i] = [i];
+    }
+    
+    for (let j = 0; j <= str1.length; j++) {
+        matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= str2.length; i++) {
+        for (let j = 1; j <= str1.length; j++) {
+            if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
+    }
+    
+    return matrix[str2.length][str1.length];
 }
 
 function generateFilenameFromPrompt(promptText) {
@@ -317,11 +632,39 @@ async function handleGetInfo(args) {
 }
 
 async function handleRunWorkflow(args) {
-    const workflowFile = args.workflow;
+    let workflowFile = args.workflow;
     if (!workflowFile.endsWith('.json')) throw new Error('Workflow file must be a .json file.');
+    
+    // 智能工作流名称匹配
+    const matchedFile = await findMatchingWorkflow(workflowFile);
+    if (matchedFile !== workflowFile) {
+        console.error(`[ComfyUI] 智能匹配工作流: ${workflowFile} -> ${matchedFile}`);
+        workflowFile = matchedFile;
+    }
+    
     const workflowPath = path.join(WORKFLOW_DIR, workflowFile);
     const workflowJson = await fs.readFile(workflowPath, 'utf-8');
-    const prompt = JSON.parse(workflowJson).prompt;
+    const workflowData = JSON.parse(workflowJson);
+    
+    // ComfyUI工作流文件的结构可能有三种：
+    // 1. 直接包含节点对象（API格式）
+    // 2. 包装在prompt属性中（API格式）
+    // 3. 完整工作流格式（包含nodes数组）
+    let prompt;
+    
+    if (workflowData.nodes && Array.isArray(workflowData.nodes)) {
+        // 完整工作流格式 - 需要转换为API格式
+        prompt = convertFullWorkflowToApiFormat(workflowData);
+    } else {
+        // API格式
+        prompt = workflowData.prompt || workflowData;
+    }
+    
+    // 验证prompt对象是否存在
+    if (!prompt || typeof prompt !== 'object') {
+        throw new Error(`Workflow file '${workflowFile}' does not contain a valid prompt object`);
+    }
+    
     if (args.prompt && !args.params) {
         args.params = [{ node_title: "Positive Prompt", inputs: { text: args.prompt } }];
     }
@@ -338,13 +681,47 @@ async function handleRunWorkflow(args) {
     }
     
     if (Array.isArray(params)) {
+        console.log('[ComfyUI] 使用智能参数修改器处理参数...');
+        
+        // 创建智能参数修改器
+        const smartModifier = createSmartParameterModifier(prompt);
+        
         for (const patch of params) {
             let targetNode = null;
-            if (patch.node_title) { targetNode = findNodeByTitle(prompt, patch.node_title); }
-            else if (patch.node_id) { targetNode = prompt[patch.node_id]; }
+            
+            // 首先尝试传统方法
+            if (patch.node_title) { 
+                targetNode = findNodeByTitle(prompt, patch.node_title); 
+            } else if (patch.node_id) { 
+                targetNode = prompt[patch.node_id]; 
+            }
+            
+            // 如果传统方法失败，使用智能查找
+            if (!targetNode && patch.node_title) {
+                console.log(`[ComfyUI] 传统查找失败，使用智能查找: ${patch.node_title}`);
+                const smartResults = findNodesSmartly(prompt, patch.node_title);
+                if (smartResults.length > 0) {
+                    targetNode = smartResults[0].node;
+                    console.log(`[ComfyUI] 智能查找成功: ${smartResults[0].nodeId} (${targetNode._meta.title})`);
+                }
+            }
+            
             if (!targetNode) { 
                 console.error(`[ComfyUI] Warning: Could not find node for patch:`, patch); 
+                
+                // 显示可用的节点信息
                 console.error(`[ComfyUI] Available node titles:`, Object.keys(prompt).map(id => prompt[id]._meta?.title).filter(Boolean));
+                console.error(`[ComfyUI] All node IDs and class types:`, Object.keys(prompt).map(id => ({ id, class_type: prompt[id].class_type, title: prompt[id]._meta?.title })));
+                
+                // 尝试智能建议
+                const suggestions = findNodesSmartly(prompt, patch.node_title);
+                if (suggestions.length > 0) {
+                    console.error(`[ComfyUI] 智能建议:`);
+                    suggestions.slice(0, 3).forEach(suggestion => {
+                        console.error(`  - ${suggestion.nodeId}: ${suggestion.node._meta.title} (相关性: ${suggestion.relevance})`);
+                    });
+                }
+                
                 continue; 
             }
             
@@ -390,13 +767,71 @@ async function handleRunWorkflow(args) {
                 }
             }
             
+            // 使用智能参数应用
+            let appliedCount = 0;
             for (const key in patch.inputs) {
+                // 首先尝试精确匹配
                 if (targetNode.inputs.hasOwnProperty(key)) {
                     const oldValue = targetNode.inputs[key];
-                    const newValue = patch.inputs[key];
+                    let newValue = patch.inputs[key];
+                    
+                    // 对特定参数类型进行智能匹配
+                    if (key === 'ckpt_name' || key === 'lora_name' || key === 'vae_name' || key === 'control_net_name') {
+                        try {
+                            const itemType = key === 'ckpt_name' ? 'model' : 
+                                          key === 'lora_name' ? 'lora' : 
+                                          key === 'vae_name' ? 'vae' : 'controlnet';
+                            
+                            // 获取可用选项
+                            const availableOptions = await getAvailableOptions(itemType);
+                            newValue = await findBestMatch(newValue, availableOptions, itemType);
+                            console.error(`[ComfyUI] 智能${itemType}匹配: ${patch.inputs[key]} -> ${newValue}`);
+                        } catch (error) {
+                            console.error(`[ComfyUI] ${itemType}匹配失败: ${error.message}`);
+                            continue; // 跳过这个参数
+                        }
+                    }
+                    
                     targetNode.inputs[key] = newValue;
                     console.error(`[ComfyUI] Applied patch: ${patch.node_title || patch.node_id}.${key} = ${newValue} (was: ${oldValue})`);
-                } else { console.error(`[ComfyUI] Warning: Node does not have an input named '${key}'. Available inputs:`, Object.keys(targetNode.inputs)); }
+                    appliedCount++;
+                } else {
+                    // 尝试智能参数名匹配
+                    const matchedKey = findBestParameterMatch(key, Object.keys(targetNode.inputs), targetNode.class_type);
+                    if (matchedKey) {
+                        const oldValue = targetNode.inputs[matchedKey];
+                        let newValue = patch.inputs[key];
+                        
+                        // 对特定参数类型进行智能匹配
+                        if (matchedKey === 'ckpt_name' || matchedKey === 'lora_name' || matchedKey === 'vae_name' || matchedKey === 'control_net_name') {
+                            try {
+                                const itemType = matchedKey === 'ckpt_name' ? 'model' : 
+                                              matchedKey === 'lora_name' ? 'lora' : 
+                                              matchedKey === 'vae_name' ? 'vae' : 'controlnet';
+                                
+                                // 获取可用选项
+                                const availableOptions = await getAvailableOptions(itemType);
+                                newValue = await findBestMatch(newValue, availableOptions, itemType);
+                                console.error(`[ComfyUI] 智能${itemType}匹配: ${patch.inputs[key]} -> ${newValue}`);
+                            } catch (error) {
+                                console.error(`[ComfyUI] ${itemType}匹配失败: ${error.message}`);
+                                continue; // 跳过这个参数
+                            }
+                        }
+                        
+                        targetNode.inputs[matchedKey] = newValue;
+                        console.error(`[ComfyUI] Smart applied patch: ${patch.node_title || patch.node_id}.${matchedKey} = ${newValue} (was: ${oldValue}) [matched from '${key}']`);
+                        appliedCount++;
+                    } else {
+                        console.error(`[ComfyUI] Warning: Node does not have an input named '${key}'. Available inputs:`, Object.keys(targetNode.inputs));
+                    }
+                }
+            }
+            
+            if (appliedCount > 0) {
+                console.error(`[ComfyUI] Successfully applied ${appliedCount} parameters to ${patch.node_title || patch.node_id}`);
+            } else {
+                console.error(`[ComfyUI] Warning: No parameters were applied to ${patch.node_title || patch.node_id}`);
             }
         }
     }
@@ -427,7 +862,8 @@ async function handleRunWorkflow(args) {
         console.error(`[ComfyUI] Updated KSampler seed: ${oldSeed} -> ${newSeed}`);
     }
     
-    const outputImages = await queuePrompt(prompt);
+    
+        const outputImages = await queuePrompt(prompt);
     if (!outputImages || outputImages.length === 0) throw new Error('Workflow did not produce any images.');
     const firstImageInfo = outputImages[0];
     console.error(`[ComfyUI] ComfyUI generated image info:`, firstImageInfo);
@@ -476,6 +912,19 @@ async function main() {
         console.log(JSON.stringify({ status: 'error', error: e.message }));
         process.exit(1);
     }
+}
+
+// 导出转换函数供测试使用
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        convertFullWorkflowToApiFormat,
+        generateSmartNodeTitle,
+        findNodeByTitle,
+        findMatchingWorkflow,
+        findBestMatch,
+        getAvailableOptions,
+        calculateLevenshteinDistance
+    };
 }
 
 main();
