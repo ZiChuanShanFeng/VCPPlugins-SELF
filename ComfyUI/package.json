@@ -1,0 +1,32 @@
+{
+  "name": "comfyui-self-hybrid",
+  "version": "2.0.0",
+  "description": "ComfyUIself Hybrid - 综合型AI工作流处理系统，融合ComfyUIGen和ComfyUIself优势",
+  "main": "comfyui-self-hybrid.js",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "uuid": "^9.0.0",
+    "ws": "^8.14.2",
+    "fs-extra": "^11.1.1",
+    "form-data": "^4.0.0"
+  },
+  "scripts": {
+    "start": "node comfyui-self-hybrid.js",
+    "manager": "node manager.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "comfyui",
+    "ai",
+    "workflow",
+    "image-generation",
+    "hybrid",
+    "template",
+    "dynamic"
+  ],
+  "author": "Enhanced by AI Assistant",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

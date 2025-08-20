@@ -10,10 +10,11 @@ function parseMounts(mountsString) {
 
     const pairs = mountsString.split(';');
     for (const pair of pairs) {
-        const parts = pair.split(':');
-        if (parts.length >= 2) {
-            const alias = parts[0].trim();
-            const mountPath = parts.slice(1).join(':').trim();
+        // Windows路径包含冒号，需要特殊处理
+        const firstColonIndex = pair.indexOf(':');
+        if (firstColonIndex > 0) {
+            const alias = pair.substring(0, firstColonIndex).trim();
+            const mountPath = pair.substring(firstColonIndex + 1).trim();
             if (alias && mountPath) {
                 mounts.set(alias, mountPath);
             }

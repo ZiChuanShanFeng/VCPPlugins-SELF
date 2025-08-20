@@ -1,6 +1,5 @@
 
 {
-  "prompt": {
     "3": {
       "class_type": "KSampler",
       "inputs": {
@@ -106,5 +105,4 @@
         "title": "Save Image"
       }
     }
-  }
 }
