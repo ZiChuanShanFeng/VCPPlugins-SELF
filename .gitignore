@@ -4,3 +4,4 @@ config.env
 # Ignore generated images
 output/
 input/
+/ComfyUI/node_modules
